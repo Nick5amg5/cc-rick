@@ -8,7 +8,7 @@ a specific one (e.g.  rick right  ). Starts video + audio together.
 Hold Ctrl+T to quit. ]]
 
 local side = ...
-local W, H, FPS = 43, 16, 15
+local W, H, FPS = 56, 21, 20
 
 -- Load and cache frames as blit-ready colour rows.
 local f = assert(fs.open("rick.data", "r"), "rick.data not found")
