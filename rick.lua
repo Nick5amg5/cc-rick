@@ -8,7 +8,7 @@ a specific one (e.g.  rick right  ). Starts video + audio together.
 Hold Ctrl+T to quit. ]]
 
 local side = ...
-local W, H, FPS = 29, 11, 15
+local W, H, FPS = 43, 16, 15
 
 -- Load and cache frames as blit-ready colour rows.
 local f = assert(fs.open("rick.data", "r"), "rick.data not found")
@@ -31,6 +31,7 @@ assert(#frames > 0 and frames[1][1] and #frames[1][1] == W, "frame size mismatch
 
 local monitor = side and peripheral.wrap(side) or peripheral.find("monitor")
 assert(monitor, "No monitor found. Place monitors then run: rick [side].")
+local ok = pcall(monitor.setTextScale, 0.5)
 monitor.setBackgroundColor(colors.black)
 monitor.clear()
 
