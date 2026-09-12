@@ -1,59 +1,102 @@
---[[ rick.lua  -  CC: Tweaked video player
-Plays rick.data on a monitor and rick.dfpwm through a speaker, in a loop.
-Centres the picture on whatever monitor size it finds.
-
-Usage:  rick [side]
+--[[ rick.lua  -  CC: Tweaked video player (multi-video)
+Plays <name>.data on a monitor and <name>.dfpwm through a speaker, in a loop.
+Usage:  rick [name]
+  - no name: picks the only video, or shows a numbered picker if several
+  - "rick intro" plays intro.data / intro.dfpwm
 Controls on the computer keyboard:
   P - pause / resume
   [ - volume down       ] - volume up
   Q - quit
-The computer screen shows a progress bar while the monitor plays the video.
-You can also hold Ctrl+T to quit. ]]
+Photo quality: per-frame adaptive 16-colour palette (monitor palette is set
+per frame before drawing). Centres the picture on whatever monitor it finds. ]]
 
-local side = ...
-local W, H, FPS, PAL = 121, 52, 20, 1
+local name = ...
+local W, H, FPS, PAL, frames
 
--- Load and cache frames as blit-ready colour rows.
-local f = assert(fs.open("rick.data", "r"), "rick.data not found")
-local content = f.readAll()
-f.close()
+local function loadVideo(n)
+    local f = assert(fs.open(n .. ".data", "r"), n .. ".data not found")
+    local content = f.readAll()
+    f.close()
 
-local ws, hs, fps_s, pal_s, body = content:match("^(%d+) (%d+) (%d+) (%d+)\n(.*)$")
-assert(ws, "bad rick.data header (want: W H FPS [0/1])")
-assert(tonumber(ws) == W and tonumber(hs) == H and tonumber(pal_s) == PAL,
-       "rick.data header does not match this player")
+    local ws, hs, fps_s, pal_s, body =
+        content:match("^(%d+) (%d+) (%d+) (%d+)\n(.*)$")
+    assert(ws, "bad " .. n .. ".data header (want: W H FPS [0/1])")
 
-local frames = {}
-for part in body:gmatch("(.-)\n\n") do
-    local lines = {}
-    for line in part:gmatch("[^\n]+") do
-        lines[#lines + 1] = line
-    end
-    local pal
-    if PAL == 1 then
-        pal = {}
-        for pr = 1, 4 do
-            local ln = lines[pr]
-            for c = 1, 4 do
-                local tok = ln:sub((c - 1) * 7 + 1, (c - 1) * 7 + 6)
-                pal[(pr - 1) * 4 + c] = {
-                    tonumber(tok:sub(1, 2), 16) / 255,
-                    tonumber(tok:sub(3, 4), 16) / 255,
-                    tonumber(tok:sub(5, 6), 16) / 255,
-                }
+    local vid = {
+        W = tonumber(ws), H = tonumber(hs),
+        FPS = tonumber(fps_s), PAL = tonumber(pal_s), frames = {},
+    }
+    for part in body:gmatch("(.-)\n\n") do
+        local lines = {}
+        for line in part:gmatch("[^\n]+") do
+            lines[#lines + 1] = line
+        end
+        local pal
+        if vid.PAL == 1 then
+            pal = {}
+            for pr = 1, 4 do
+                local ln = lines[pr]
+                for c = 1, 4 do
+                    local tok = ln:sub((c - 1) * 7 + 1, (c - 1) * 7 + 6)
+                    pal[(pr - 1) * 4 + c] = {
+                        tonumber(tok:sub(1, 2), 16) / 255,
+                        tonumber(tok:sub(3, 4), 16) / 255,
+                        tonumber(tok:sub(5, 6), 16) / 255,
+                    }
+                end
             end
         end
+        local rows = {}
+        for i = (vid.PAL == 1 and 5 or 1), #lines do
+            rows[#rows + 1] = lines[i]
+        end
+        vid.frames[#vid.frames + 1] = { rows = rows, pal = pal }
     end
-    local rows = {}
-    for i = (PAL == 1 and 5 or 1), #lines do
-        rows[#rows + 1] = lines[i]
-    end
-    frames[#frames + 1] = { rows = rows, pal = pal }
+    assert(vid.frames[1] and vid.frames[1].rows[1]
+           and #vid.frames[1].rows[1] == vid.W, "frame size mismatch")
+    return vid
 end
-assert(#frames > 0 and frames[1].rows[1] and #frames[1].rows[1] == W, "frame size mismatch")
 
-local monitor = side and peripheral.wrap(side) or peripheral.find("monitor")
-assert(monitor, "No monitor found. Place monitors then run: rick [side].")
+if not name then
+    local list = {}
+    for f in fs.find("*.data") do
+        list[#list + 1] = f:sub(1, #f - 5)
+    end
+    if #list == 0 then
+        error("no .data files here - run install first")
+    elseif #list == 1 then
+        name = list[1]
+    else
+        term.clear()
+        term.setTextColor(colors.green)
+        term.setCursorPos(1, 1)
+        term.write("SELECT VIDEO   (1-" .. math.min(9, #list) .. ", Q = quit)")
+        for i, nm in ipairs(list) do
+            term.setCursorPos(1, 2 + i)
+            term.setTextColor(colors.white)
+            term.write((i <= 9 and (i .. ". ") or "   ") .. nm)
+        end
+        local picked
+        while not picked do
+            local ev = {os.pullEvent()}
+            if ev[1] == "key" then
+                if ev[2] == keys.q then return end
+                local idx = ev[2] - keys.one + 1
+                if idx >= 1 and idx <= math.min(9, #list) then
+                    picked = idx
+                end
+            end
+        end
+        name = list[picked]
+    end
+end
+
+local vid = loadVideo(name)
+W, H, FPS, PAL = vid.W, vid.H, vid.FPS, vid.PAL
+frames = vid.frames
+
+local monitor = peripheral.find("monitor")
+assert(monitor, "No monitor found. Place monitors then run: rick.")
 pcall(monitor.setTextScale, 0.5)
 monitor.setBackgroundColor(colors.black)
 monitor.clear()
@@ -109,7 +152,7 @@ local function drawGui(force)
     term.setTextColor(colors.white)
     term.clear()
     term.setCursorPos(1, 1)
-    term.write("CC RICK   " .. m1 .. ":" .. rs1 .. " / " .. m2 .. ":" .. rs2)
+    term.write(name .. "   " .. m1 .. ":" .. rs1 .. " / " .. m2 .. ":" .. rs2)
     term.setCursorPos(1, 3)
     term.write(string.rep("=", filled) .. string.rep("-", barW - filled))
     term.setCursorPos(1, 5)
@@ -172,7 +215,8 @@ local function audioThread()
     end
     local dfpwm = require "cc.audio.dfpwm"
     local function openTrack()
-        return assert(io.open("rick.dfpwm", "rb"), "rick.dfpwm not found"), dfpwm.make_decoder()
+        return assert(io.open(name .. ".dfpwm", "rb"), name .. ".dfpwm not found"),
+               dfpwm.make_decoder()
     end
     local track, decoder = openTrack()
     while not quit do
@@ -194,5 +238,5 @@ local function audioThread()
     track:close()
 end
 
-print("Now playing - P pause, [ ] volume, Q quit")
+print("Now playing " .. name .. " - P pause, [ ] volume, Q quit")
 parallel.waitForAll(videoThread, audioThread)
