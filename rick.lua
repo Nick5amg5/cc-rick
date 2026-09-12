@@ -5,12 +5,13 @@ Centres the picture on whatever monitor size it finds.
 Usage:  rick [side]
 Controls on the computer keyboard:
   P - pause / resume
+  [ - volume down       ] - volume up
   Q - quit
 The computer screen shows a progress bar while the monitor plays the video.
 You can also hold Ctrl+T to quit. ]]
 
 local side = ...
-local W, H, FPS = 79, 38, 20
+local W, H, FPS = 121, 52, 15
 
 -- Load and cache frames as blit-ready colour rows.
 local f = assert(fs.open("rick.data", "r"), "rick.data not found")
@@ -58,6 +59,7 @@ drawIdx(1)
 
 local paused = false
 local quit = false
+local volume = 1.2                  -- 0 .. 3, use [] to change
 local framesShown = 0
 local lastGuiAt = -1
 
@@ -92,6 +94,8 @@ local function drawGui(force)
     local mw2, mh2 = monitor.getSize()
     term.setCursorPos(1, 9)
     term.write("screen " .. mw2 .. "x" .. mh2 .. " cells")
+    term.setCursorPos(1, 11)
+    term.write("volume " .. math.floor(volume * 10) / 10 .. "   [ - / = ]")
 end
 drawGui(true)
 
@@ -120,6 +124,12 @@ local function videoThread()
                 drawGui(true)
             elseif ev[2] == keys.q then
                 quit = true
+            elseif ev[2] == keys.minus then
+                volume = math.max(0, volume - 0.1)
+                drawGui(true)
+            elseif ev[2] == keys.equals then
+                volume = math.min(3, volume + 0.1)
+                drawGui(true)
             end
         end
     end
@@ -146,7 +156,7 @@ local function audioThread()
                 track, decoder = openTrack()
             else
                 local buffer = decoder(chunk)
-                while not speaker.playAudio(buffer) and not quit do
+                while not speaker.playAudio(buffer, volume) and not quit do
                     os.pullEvent("speaker_audio_empty")
                 end
             end
@@ -155,5 +165,5 @@ local function audioThread()
     track:close()
 end
 
-print("Now playing - P pause / resume, Q quit")
+print("Now playing - P pause, [ ] volume, Q quit")
 parallel.waitForAll(videoThread, audioThread)
