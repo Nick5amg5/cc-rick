@@ -10,7 +10,7 @@ The computer screen shows a progress bar while the monitor plays the video.
 You can also hold Ctrl+T to quit. ]]
 
 local side = ...
-local W, H, FPS = 56, 30, 20
+local W, H, FPS = 79, 38, 20
 
 -- Load and cache frames as blit-ready colour rows.
 local f = assert(fs.open("rick.data", "r"), "rick.data not found")
@@ -89,6 +89,9 @@ local function drawGui(force)
     else
         term.write("P = pause / resume   Q = quit")
     end
+    local mw2, mh2 = monitor.getSize()
+    term.setCursorPos(1, 9)
+    term.write("screen " .. mw2 .. "x" .. mh2 .. " cells")
 end
 drawGui(true)
 
