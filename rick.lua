@@ -18,8 +18,13 @@ local function loadVideo(n)
     local content = f.readAll()
     f.close()
 
+    content = content:gsub("\r\n", "\n")
     local ws, hs, fps_s, pal_s, body =
         content:match("^(%d+) (%d+) (%d+) (%d+)\n(.*)$")
+    if not ws then
+        print(n .. ".data size: " .. #content .. " bytes")
+        print("first line: " .. (content:match("^[^\n]+") or "(end of file)"))
+    end
     assert(ws, "bad " .. n .. ".data header (want: W H FPS [0/1])")
 
     local vid = {
