@@ -11,7 +11,7 @@ RUN:
 
 That will fetch the three files and tell you to run  rick  to play. ]]
 
-local BASE = "" -- <-- put your base URL here, e.g. "https://gist.githubusercontent.com/joe/abc123/raw"
+local BASE = "https://raw.githubusercontent.com/Nick5amg5/cc-rick/HEAD/"
 
 local FILES = { "rick.lua", "rick.data", "rick.dfpwm" }
 
