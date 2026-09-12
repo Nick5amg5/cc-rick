@@ -11,7 +11,7 @@ The computer screen shows a progress bar while the monitor plays the video.
 You can also hold Ctrl+T to quit. ]]
 
 local side = ...
-local W, H, FPS = 121, 52, 15
+local W, H, FPS = 121, 52, 12
 
 -- Load and cache frames as blit-ready colour rows.
 local f = assert(fs.open("rick.data", "r"), "rick.data not found")
