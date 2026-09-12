@@ -11,26 +11,46 @@ The computer screen shows a progress bar while the monitor plays the video.
 You can also hold Ctrl+T to quit. ]]
 
 local side = ...
-local W, H, FPS = 121, 52, 12
+local W, H, FPS, PAL = 121, 52, 20, 1
 
 -- Load and cache frames as blit-ready colour rows.
 local f = assert(fs.open("rick.data", "r"), "rick.data not found")
 local content = f.readAll()
 f.close()
 
-local ws, hs, fps_s, body = content:match("^(%d+) (%d+) (%d+)\n(.*)$")
-assert(ws, "bad rick.data header")
-assert(tonumber(ws) == W and tonumber(hs) == H, "rick.data size does not match this player")
+local ws, hs, fps_s, pal_s, body = content:match("^(%d+) (%d+) (%d+) (%d+)\n(.*)$")
+assert(ws, "bad rick.data header (want: W H FPS [0/1])")
+assert(tonumber(ws) == W and tonumber(hs) == H and tonumber(pal_s) == PAL,
+       "rick.data header does not match this player")
 
 local frames = {}
 for part in body:gmatch("(.-)\n\n") do
-    local rows = {}
+    local lines = {}
     for line in part:gmatch("[^\n]+") do
-        rows[#rows + 1] = line
+        lines[#lines + 1] = line
     end
-    frames[#frames + 1] = rows
+    local pal
+    if PAL == 1 then
+        pal = {}
+        for pr = 1, 4 do
+            local ln = lines[pr]
+            for c = 1, 4 do
+                local tok = ln:sub((c - 1) * 7 + 1, (c - 1) * 7 + 6)
+                pal[(pr - 1) * 4 + c] = {
+                    tonumber(tok:sub(1, 2), 16) / 255,
+                    tonumber(tok:sub(3, 4), 16) / 255,
+                    tonumber(tok:sub(5, 6), 16) / 255,
+                }
+            end
+        end
+    end
+    local rows = {}
+    for i = (PAL == 1 and 5 or 1), #lines do
+        rows[#rows + 1] = lines[i]
+    end
+    frames[#frames + 1] = { rows = rows, pal = pal }
 end
-assert(#frames > 0 and frames[1][1] and #frames[1][1] == W, "frame size mismatch")
+assert(#frames > 0 and frames[1].rows[1] and #frames[1].rows[1] == W, "frame size mismatch")
 
 local monitor = side and peripheral.wrap(side) or peripheral.find("monitor")
 assert(monitor, "No monitor found. Place monitors then run: rick [side].")
@@ -48,8 +68,17 @@ end
 computeOffsets()
 
 local lastIdx = 1
+local function applyPalette(idx)
+    local pal = frames[idx].pal
+    if not pal then return end
+    for i = 1, 16 do
+        local c = pal[i]
+        monitor.setPaletteColor(2 ^ (i - 1), c[1], c[2], c[3])
+    end
+end
 local function drawIdx(idx)
-    local rows = frames[idx]
+    applyPalette(idx)
+    local rows = frames[idx].rows
     for y = 1, H do
         monitor.setCursorPos(startX, startY + y - 1)
         monitor.blit(spaces, rows[y], rows[y])
