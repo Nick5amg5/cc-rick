@@ -1,13 +1,13 @@
---[[ delete.lua  -  remove track files from this computer to free disk space.
+--[[ deletev.lua  -  remove track files from this computer to free disk space.
 The repo copies stay, so you can re-install them any time with:  install <name>
 
-Usage:  delete <track> [track ...]   e.g.  delete osama
-        delete -a                    delete every track (keeps rick.lua/install/delete)
+Usage:  deletev <track> [track ...]   e.g.  deletev osama
+        deletev -a                    delete every track (keeps rick.lua/install/deletev)
 Never touches rick.lua - the generic player is shared by all tracks. ]]
 
 local args = {...}
 if #args == 0 then
-    print("usage: delete <track>...   or   delete -a")
+    print("usage: deletev <track>...   or   deletev -a")
     return
 end
 
