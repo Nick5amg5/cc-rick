@@ -109,11 +109,11 @@ local state = {
     loop = false,
     current = nil,           -- song label currently loaded
     elapsed = 0,
-    dir = nil,               -- open file handle (library song)
-    http = nil,              -- open stream handle (online song)
-    online = nil,            -- { url, id } when streaming from the API
-    onlineOpen = nil,        -- the online entry currently open
-    openName = nil,
+    buf = nil,               -- the whole song as dfpwm bytes (loaded at song start)
+    pos = 1,                 -- offset of the next chunk within buf
+    online = nil,            -- { url, id, item } when playing from the API
+    onlineOpen = nil,        -- the online entry currently loaded into buf
+    openName = nil,          -- the local song currently loaded into buf
     seq = 0,                 -- increments on every song change (aborts old playback)
 }
 
@@ -146,18 +146,17 @@ local function emit()
     os.queueEvent("music_audio")
 end
 
-local function closeHandles()
-    if state.http then pcall(state.http.close, state.http) end
-    state.http = nil
-    if state.dir then pcall(state.dir.close, state.dir) end
-    state.dir = nil
+local function resetSource()
+    state.buf = nil
+    state.pos = 1
+    state.openName = nil
+    state.onlineOpen = nil
 end
 
 local function startSong(n)
     state.current = n
     state.online = nil
-    state.onlineOpen = nil
-    closeHandles()
+    resetSource()
     state.playing = true
     state.paused = false
     state.elapsed = 0
@@ -170,8 +169,7 @@ local function stopSong()
     state.paused = false
     state.current = nil
     state.online = nil
-    state.onlineOpen = nil
-    closeHandles()
+    resetSource()
     state.seq = state.seq + 1
     emit()
 end
@@ -215,8 +213,7 @@ end
 local function startOnline(it)
     state.current = it.label
     state.online = { url = streamUrl(it.id), id = it.id, item = it }
-    state.onlineOpen = nil
-    closeHandles()
+    resetSource()
     state.playing = true
     state.paused = false
     state.elapsed = 0
@@ -266,8 +263,7 @@ local function prevSong()
     else
         state.elapsed = 0 -- just restart the current one
         state.seq = state.seq + 1
-        state.onlineOpen = nil
-        closeHandles()
+        resetSource()
         emit()
     end
 end
@@ -399,70 +395,72 @@ local function audioLoop()
         os.pullEvent("music_audio")
         if state.playing and state.current and not state.paused then
             local online = state.online
-            local needOpen = false
-            if online then
-                needOpen = state.onlineOpen ~= online
-            else
-                needOpen = state.dir == nil or state.openName ~= state.current
-            end
+            local needOpen = (online and state.onlineOpen ~= online)
+                or (not online and (state.openName ~= state.current or state.buf == nil))
             if needOpen then
-                if state.http then pcall(state.http.close, state.http) end
-                state.http = nil
                 if online then
+                    state.status = "loading stream ..."
                     local resp = streamGet(online.url)
                     if not resp then
+                        state.status = "couldn't download stream (check http/whitelist)"
                         stopSong()
                     else
-                        state.http = resp
-                        state.onlineOpen = online
-                        decoder = dfpwm.make_decoder()
-                        state.elapsed = 0
+                        local okReadall, data = pcall(resp.readAll, resp)
+                        pcall(resp.close, resp)
+                        if okReadall and data and #data > 0 then
+                            state.buf = data
+                            state.pos = 1
+                            state.onlineOpen = online
+                            decoder = dfpwm.make_decoder()
+                            state.elapsed = 0
+                        else
+                            if not okReadall then
+                                state.status = "couldn't read stream"
+                            else
+                                state.status = "empty stream"
+                            end
+                            stopSong()
+                        end
                     end
                 else
-                    if state.dir and state.openName ~= state.current then
-                        pcall(state.dir.close, state.dir)
-                    end
-                    state.dir = io.open(songPath(state.current), "rb")
-                    if not state.dir then
-                        stopSong()
-                    else
+                    local p = songPath(state.current)
+                    local f = fs.open(p, "rb")
+                    local data = f and f:readAll()
+                    if f then f:close() end
+                    if data and #data > 0 then
+                        state.buf = data
+                        state.pos = 1
                         state.openName = state.current
                         decoder = dfpwm.make_decoder()
                         state.elapsed = 0
+                    else
+                        state.status = "song file missing or empty"
+                        stopSong()
                     end
                 end
             end
-            local h = state.online and state.http or state.dir
-            if h then
+            if state.buf then
                 local mySeq = state.seq
-                local chunk
-                local okRead = pcall(function() chunk = h:read(2048) end)
-                if not okRead or not chunk or #chunk == 0 then
-                    if state.online then
-                        pcall(state.http.close, state.http)
-                        state.http = nil
-                        state.onlineOpen = nil
-                    else
-                        pcall(state.dir.close, state.dir)
-                        state.dir = nil
-                        state.openName = nil
-                    end
-                    if okRead then
-                        if mySeq == state.seq then nextSong() end
-                    else
-                        state.status = "couldn't read audio stream"
-                        if mySeq == state.seq then stopSong() end
-                    end
+                local chunk = state.buf:sub(state.pos, state.pos + 2047)
+                state.pos = state.pos + 2048
+                if #chunk == 0 then
+                    state.buf = nil
+                    if mySeq == state.seq then nextSong() end
                     if mySeq == state.seq then emit() end
                 else
-                    local buffer = decoder(chunk)
-                    while not speaker.playAudio(buffer, state.volume) do
-                        os.pullEvent("speaker_audio_empty")
-                        if not state.playing or state.seq ~= mySeq then break end
-                    end
-                    if mySeq == state.seq then
-                        state.elapsed = state.elapsed + #chunk * 8 / 48000
-                        os.queueEvent("music_redraw")
+                    local okDec, buffer = pcall(decoder, chunk)
+                    if not okDec then
+                        state.status = "audio decode error"
+                        stopSong()
+                    else
+                        while not speaker.playAudio(buffer, state.volume) do
+                            os.pullEvent("speaker_audio_empty")
+                            if not state.playing or state.seq ~= mySeq then break end
+                        end
+                        if mySeq == state.seq then
+                            state.elapsed = state.elapsed + #chunk * 8 / 48000
+                            os.queueEvent("music_redraw")
+                        end
                     end
                 end
             end
