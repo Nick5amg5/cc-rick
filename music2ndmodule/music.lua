@@ -23,6 +23,8 @@ GUI keys:
   [ and ]       volume down / up
   f             search online (same song API as the classic CC "music" player)
   d             save the highlighted online result into your own library
+  z             save the currently playing song (adds it to a playlist; if it's
+                an online stream it's downloaded to your library first)
   a             add the highlighted song to the current playlist
   s             save the current playlist (prompts for a name if none)
   p             cycle playlists (ALL songs -> playlist 1 -> ... -> ALL)
@@ -206,7 +208,7 @@ end
 
 local function startOnline(it)
     state.current = it.label
-    state.online = { url = streamUrl(it.id), id = it.id }
+    state.online = { url = streamUrl(it.id), id = it.id, item = it }
     state.onlineOpen = nil
     closeHandles()
     state.playing = true
@@ -375,7 +377,7 @@ local function draw()
     term.setTextColor(colors.gray)
     term.setCursorPos(1, h)
     term.clearLine()
-    local help = "ENTER play | n/b next | space pause | l loop | [ ] vol | f search online | d save | a add | s save pl | p playlists | c new | x del | q quit"
+    local help = "ENTER play | n/b next | space pause | l loop | [ ] vol | f search | d save | z save now playing | a add | p playlists | c new | x del | q quit"
     term.write(help:sub(1, math.max(1, w - 1)))
 end
 
@@ -584,6 +586,55 @@ local function uiLoop()
                     os.queueEvent("music_redraw")
                 else
                     state.status = "use f to search online first"
+                    os.queueEvent("music_redraw")
+                end
+            elseif k == keys.z then
+                if not state.current or not state.playing then
+                    state.status = "nothing is playing to save"
+                    os.queueEvent("music_redraw")
+                else
+                    local cur = state.current
+                    local ok = true
+                    local target = (viewMode ~= "ALL" and viewMode ~= "ONLINE") and viewMode or nil
+                    if state.online then
+                        local it = state.online.item
+                        local fname = sanitizeName(it.name or it.label)
+                        state.status = "saving " .. fname .. " to library ..."
+                        os.queueEvent("music_redraw")
+                        local resp = http.get(state.online.url, nil, true, { timeout = 120000 })
+                        if not resp then
+                            state.status = "couldn't download - check http/whitelist"
+                            ok = false
+                            os.queueEvent("music_redraw")
+                        else
+                            local data = resp.readAll()
+                            resp.close()
+                            fs.makeDir("music")
+                            local f = assert(fs.open(songPath(fname), "wb"))
+                            f.write(data)
+                            f.close()
+                            cur = fname
+                        end
+                    end
+                    if ok then
+                        if not target then
+                            local nm = promptLine("add \"" .. cur .. "\" to playlist: ")
+                            if nm ~= "" then target = nm end
+                        end
+                        if target then
+                            local items = loadPlaylist(target)
+                            if inList(cur, items) then
+                                state.status = "already in playlist \"" .. target .. "\""
+                            else
+                                items[#items + 1] = cur
+                                savePlaylist(target, items)
+                                state.status = "added \"" .. cur .. "\" to \"" .. target .. "\""
+                            end
+                            playlists = listPlaylists()
+                            viewMode = "ALL"
+                            rebuildView()
+                        end
+                    end
                     os.queueEvent("music_redraw")
                 end
             elseif k == keys.leftBracket then
