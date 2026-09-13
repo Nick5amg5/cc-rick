@@ -43,10 +43,11 @@ local args = { ... }
 
 local function songPath(n) return "music/" .. n .. ".dfpwm" end
 
-local function streamGet(url, timeout)
+local function streamGet(url)
     -- unambiguously request a binary response; also works on CC versions
-    -- where http.get only accepts the table form.
-    return http.get({ url = url, binary = true, timeout = timeout })
+    -- where http.get only accepts the table form. Timeout is in SECONDS
+    -- (CC caps it at 60.0) and only bounds the initial connection.
+    return http.get({ url = url, binary = true, timeout = 30 })
 end
 
 local API_BASE = "https://ipod-2to6magyna-uc.a.run.app/"
@@ -408,7 +409,7 @@ local function audioLoop()
                 if state.http then pcall(state.http.close, state.http) end
                 state.http = nil
                 if online then
-                    local resp = streamGet(online.url, 60000)
+                    local resp = streamGet(online.url)
                     if not resp then
                         stopSong()
                     else
@@ -496,7 +497,7 @@ local function runCLI()
             return
         end
         io.write("downloading " .. name .. " ... ")
-        local resp = streamGet(url, 120000)
+        local resp = streamGet(url)
         if not resp then
             print("FAILED")
             return
@@ -582,7 +583,7 @@ local function uiLoop()
                     local fname = sanitizeName(it.name or it.label)
                     state.status = "saving " .. fname .. " ..."
                     os.queueEvent("music_redraw")
-                    local resp = streamGet(streamUrl(it.id), 120000)
+                    local resp = streamGet(streamUrl(it.id))
                     if resp then
                         local data = resp.readAll()
                         resp.close()
@@ -612,7 +613,7 @@ local function uiLoop()
                         local fname = sanitizeName(it.name or it.label)
                         state.status = "saving " .. fname .. " to library ..."
                         os.queueEvent("music_redraw")
-                        local resp = streamGet(state.online.url, 120000)
+                        local resp = streamGet(state.online.url)
                         if not resp then
                             state.status = "couldn't download - check http/whitelist"
                             ok = false
