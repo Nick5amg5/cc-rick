@@ -427,7 +427,7 @@ local function audioLoop()
                         if okCode and c then code = " (http " .. c .. ")" end
                         local okReadall, data = pcall(resp.readAll, resp)
                         pcall(resp.close, resp)
-                        if okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a" then
+                        if okReadall and data and #data > 0 then
                             state.buf = data
                             state.pos = 1
                             state.onlineOpen = online
@@ -436,8 +436,6 @@ local function audioLoop()
                         else
                             if not okReadall then
                                 state.status = "couldn't read stream" .. code
-                            elseif data and data:sub(1, 7) ~= "DFPWM1a" then
-                                state.status = "not audio" .. code
                             else
                                 state.status = "empty stream" .. code
                             end
@@ -524,8 +522,12 @@ local function runCLI()
         end
         local okReadall, data = pcall(resp.readAll, resp)
         resp.close()
-        if not (okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a") then
-            print("FAILED: response is not dfpwm audio")
+        if okReadall and data and #data > 0 then
+            if data:sub(1, 7) ~= "DFPWM1a" then
+                data = "DFPWM1a" .. data -- stream is raw frames; make a proper file
+            end
+        else
+            print("FAILED: empty response")
             return
         end
         fs.makeDir("music")
@@ -614,14 +616,15 @@ local function uiLoop()
                         local okCode, c = pcall(resp.getResponseCode, resp)
                         if okCode and c then code = " (http " .. c .. ")" end
                         resp.close()
-                        if okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a" then
+                        if okReadall and data and #data > 0 then
+                            if data:sub(1, 7) ~= "DFPWM1a" then
+                                data = "DFPWM1a" .. data -- stream is raw frames; make a proper file
+                            end
                             fs.makeDir("music")
                             local f = assert(fs.open(songPath(fname), "wb"))
                             f.write(data)
                             f.close()
                             state.status = "saved music/" .. fname .. ".dfpwm (" .. #data .. " B)"
-                        elseif okReadall and data and data:sub(1, 7) ~= "DFPWM1a" then
-                            state.status = "not audio" .. code
                         else
                             state.status = "couldn't read response" .. code
                         end
@@ -657,7 +660,10 @@ local function uiLoop()
                             local okCode, c = pcall(resp.getResponseCode, resp)
                             if okCode and c then code = " (http " .. c .. ")" end
                             resp.close()
-                            if okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a" then
+                            if okReadall and data and #data > 0 then
+                                if data:sub(1, 7) ~= "DFPWM1a" then
+                                    data = "DFPWM1a" .. data -- stream is raw frames; make a proper file
+                                end
                                 fs.makeDir("music")
                                 local f = assert(fs.open(songPath(fname), "wb"))
                                 f.write(data)
