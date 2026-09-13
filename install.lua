@@ -65,6 +65,7 @@ local function fetch(name)
 end
 
 fetch("rick.lua")  -- generic player (always)
+pcall(function() fetch("logo.data") end)  -- idle logo (optional; some hosts have none)
 for _, t in ipairs(tracks) do
     fetch(t .. ".data")
     fetch(t .. ".dfpwm")
