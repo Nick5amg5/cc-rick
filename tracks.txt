@@ -1,0 +1,27 @@
+=== CC VIDEO WALL - TRACKS ===
+
+Hosted at:  https://raw.githubusercontent.com/Nick5amg5/cc-rick/HEAD/
+
+Track name   Notes
+  rick          Never Gonna Give You Up
+  osama         -
+  ganstaparadise
+  amishparadise
+  verity        -
+  jet2ad        30 s ad
+  clullaby      -
+
+Commands (type on the computer, "/" is the computer's root):
+  install <name>            install one track   (e.g.  install osama)
+  install -f <name> ...     install several, overwriting any existing files
+  install -f rick osama ganstaparadise amishparadise verity jet2ad clullaby   (all)
+  delete <name>             remove one track
+  delete -a                 remove all tracks (keeps rick.lua / install / delete)
+  rick                      play (shows picker if several tracks are installed)
+  rick <name>               play a specific track
+  rick list                 list what is actually installed on this computer
+
+Size note: each ~164x67 track is 45-64 MB of game data. All 7 together
+(~310 MB) exceed the computer's 256 MB disk, so at most ~4-5 fit at once;
+delete a track before installing another. The repo keeps every file, so a
+deleted track can be reinstalled anytime with:  install <name>
