@@ -69,7 +69,7 @@ local function listInstalled()
     term.setCursorPos(1, 1)
     term.write("INSTALLED TRACKS")
     local names = {}
-    for f in fs.find("*.data") do
+    for _, f in ipairs(fs.find("*.data")) do
         names[#names + 1] = f:sub(1, #f - 5)
     end
     table.sort(names)
@@ -132,7 +132,7 @@ end
 
 if not name then
     local list = {}
-    for f in fs.find("*.data") do
+    for _, f in ipairs(fs.find("*.data")) do
         list[#list + 1] = f:sub(1, #f - 5)
     end
     if #list == 0 then
@@ -265,7 +265,7 @@ end
 
 if not name then
     local all = {}
-    for f in fs.find("*.data") do
+    for _, f in ipairs(fs.find("*.data")) do
         all[#all + 1] = f:sub(1, #f - 5)
     end
     if #all == 0 then

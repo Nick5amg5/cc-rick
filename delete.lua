@@ -21,7 +21,7 @@ local function rm(path)
 end
 
 if args[1] == "-a" then
-    for f in fs.find("*.data") do
+    for _, f in ipairs(fs.find("*.data")) do
         local n = f:sub(1, #f - 5)
         rm(n .. ".data")
         rm(n .. ".dfpwm")
