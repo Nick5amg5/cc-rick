@@ -3,6 +3,7 @@ Plays <name>.data on a monitor and <name>.dfpwm through a speaker, in a loop.
 Usage:  rick [name]
   - no name: picks the only video, or shows a numbered picker if several
   - "rick intro" plays intro.data / intro.dfpwm
+  - "rick list" lists every installed track (name, size, resolution, etc.)
 Controls on the computer keyboard:
   P - pause / resume
   [ - volume down       ] - volume up
@@ -60,6 +61,73 @@ local function loadVideo(n)
     assert(vid.frames[1] and vid.frames[1].rows[1]
            and #vid.frames[1].rows[1] == vid.W, "frame size mismatch")
     return vid
+end
+
+local function listInstalled()
+    term.clear()
+    term.setTextColor(colors.yellow)
+    term.setCursorPos(1, 1)
+    term.write("INSTALLED TRACKS")
+    local names = {}
+    for f in fs.find("*.data") do
+        names[#names + 1] = f:sub(1, #f - 5)
+    end
+    table.sort(names)
+    if #names == 0 then
+        error("no .data files here - run install first")
+    end
+    local total = 0
+    for i, nm in ipairs(names) do
+        local size = fs.getSize(nm .. ".data") or 0
+        total = total + size
+        local f = fs.open(nm .. ".data", "r")
+        if not f then
+            term.setTextColor(colors.red)
+            term.setCursorPos(1, 2 + i)
+            term.write(nm .. "   (unreadable)")
+        else
+            local hdr = f.readLine()
+            f.close()
+            local Ws, Hs, fpsS, palS = hdr:match("(%d+) (%d+) (%d+) (%d+)")
+            if not Ws then
+                term.setTextColor(colors.red)
+                term.setCursorPos(1, 2 + i)
+                term.write(nm .. "   (bad header)")
+            else
+                local W, H, FPS, PAL = tonumber(Ws), tonumber(Hs),
+                                       tonumber(fpsS), tonumber(palS)
+                local perFrame = H * (W + 1) + 1
+                if PAL == 1 then perFrame = perFrame + 4 * 28 end
+                local estFrames = math.max(1, math.floor(size / perFrame))
+                local dur = estFrames / FPS
+                term.setTextColor(colors.white)
+                term.setCursorPos(1, 2 + i)
+                term.write(nm)
+                term.setCursorPos(16, 2 + i)
+                term.write(string.format("%d x %d @%d", W, H, FPS)
+                           .. (PAL == 1 and " pal" or "")) 
+                term.setCursorPos(35, 2 + i)
+                term.write(string.format("%.1fMB", size / 1048576))
+                term.setCursorPos(45, 2 + i)
+                term.write(string.format("%d:%02d", math.floor(dur / 60), dur % 60))
+            end
+        end
+    end
+    local free = fs.getFreeSpace("/") or 0
+    local totalCap = total + free
+    term.setTextColor(colors.white)
+    term.setCursorPos(1, 3 + #names)
+    term.write(string.format("used %.1f MB of %.1f MB, free %.1f MB",
+                             total / 1048576, totalCap / 1048576, free / 1048576))
+    term.setCursorPos(1, 5 + #names)
+    term.setTextColor(colors.gray)
+    term.write("press any key to exit")
+    os.pullEvent("key")
+    return 0
+end
+
+if name == "list" then
+    return listInstalled()
 end
 
 if not name then
