@@ -1,11 +1,13 @@
 --[[ rick.lua  -  CC: Tweaked video player (multi-video)
-Plays <name>.data on a monitor and <name>.dfpwm through a speaker, in a loop.
+Plays <name>.data on a monitor and <name>.dfpwm through a speaker. Plays once,
+then shows the logo and stops (press L for continuous loop).
 Usage:  rick [name]
   - no name: picks the only video, or shows a numbered picker if several
   - "rick intro" plays intro.data / intro.dfpwm
   - "rick list" lists every installed track (name, size, resolution, etc.)
 Controls on the computer keyboard:
   P - pause / resume       Q - quit
+  L - loop on / off         (default OFF: play once, then back to the logo)
   [ - volume down     ] - volume up
   , - audio earlier   . - audio later   (persisted to rick.sync)
 Photo quality: per-frame adaptive 16-colour palette (monitor palette is set
@@ -390,9 +392,12 @@ local function drawGui(force)
     term.write("volume " .. math.floor(volume * 10) / 10 .. "   [ - / = ]")
     term.setCursorPos(1, 13)
     term.write("sync " .. string.format("%.2f", syncLead) .. " s   [ , / . ]")
+    term.setCursorPos(1, 15)
+    term.write("loop " .. (loopMode and "ON" or "OFF") .. "   [ L ]")
 end
 drawGui(true)
 
+local loopMode = false              -- L toggles; default: play once then logo
 local vstart = os.clock()
 
 local function videoThread()
@@ -408,10 +413,25 @@ local function videoThread()
                 if acc >= 1 then
                     local n = math.floor(acc)
                     acc = acc - n
-                    lastIdx = (lastIdx - 1 + n) % #frames + 1
-                    drawIdx(lastIdx)
-                    framesShown = framesShown + n
-                    drawGui(false)
+                    lastIdx = lastIdx + n
+                    if lastIdx > #frames then
+                        if loopMode then
+                            lastIdx = (lastIdx - 1) % #frames + 1
+                            drawIdx(lastIdx)
+                            framesShown = framesShown + n
+                            drawGui(false)
+                        else
+                            lastIdx = #frames
+                            drawIdx(lastIdx)
+                            framesShown = framesShown + n
+                            quit = true
+                            drawGui(true)
+                        end
+                    else
+                        drawIdx(lastIdx)
+                        framesShown = framesShown + n
+                        drawGui(false)
+                    end
                 end
             end
         elseif ev[1] == "key" then
@@ -420,6 +440,9 @@ local function videoThread()
                 drawGui(true)
             elseif ev[2] == keys.q then
                 quit = true
+            elseif ev[2] == keys.l then
+                loopMode = not loopMode
+                drawGui(true)
             elseif ev[2] == keys.minus then
                 volume = math.max(0, volume - 0.1)
                 drawGui(true)
@@ -458,7 +481,11 @@ local function audioThread()
             local chunk = track:read(2048)
             if not chunk or #chunk == 0 then
                 track:close()
-                track, decoder = openTrack()
+                if loopMode then
+                    track, decoder = openTrack()
+                else
+                    break
+                end
             else
                 local buffer = decoder(chunk)
                 while not speaker.playAudio(buffer, volume) and not quit do
@@ -470,6 +497,6 @@ local function audioThread()
     track:close()
 end
 
-print("Now playing " .. name .. " - P pause, [ ] volume, , . sync, Q quit")
+print("Now playing " .. name .. " - P pause, [ ] volume, , . sync, L loop, Q quit")
 parallel.waitForAll(videoThread, audioThread)
 showLogo("STOPPED", name)
