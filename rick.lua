@@ -170,11 +170,76 @@ pcall(monitor.setTextScale, 0.5)
 monitor.setBackgroundColor(colors.black)
 monitor.clear()
 
+local logo
+do
+    local lf = fs.open("logo.data", "r")
+    if lf then
+        local content = lf.readAll()
+        lf.close()
+        content = content:gsub("\r\n", "\n")
+        local ws, hs, palS, body = content:match("^(%d+) (%d+) (%d+) (%d+)\n(.*)$")
+        if ws then
+            local lw, lh = tonumber(ws), tonumber(hs)
+            local part = body:match("^(.-)\n\n")
+            if part and lw and lh and lw > 0 and lh > 0 then
+                local lines = {}
+                for line in part:gmatch("[^\n]+") do lines[#lines + 1] = line end
+                local pal
+                if tonumber(palS) == 1 then
+                    pal = {}
+                    for pr = 1, 4 do
+                        local ln = lines[pr]
+                        for c = 1, 4 do
+                            local tok = ln:sub((c - 1) * 7 + 1, (c - 1) * 7 + 6)
+                            pal[(pr - 1) * 4 + c] = {
+                                tonumber(tok:sub(1, 2), 16) / 255,
+                                tonumber(tok:sub(3, 4), 16) / 255,
+                                tonumber(tok:sub(5, 6), 16) / 255,
+                            }
+                        end
+                    end
+                end
+                local rows = {}
+                for i = (tonumber(palS) == 1 and 5 or 1), #lines do
+                    rows[#rows + 1] = lines[i]
+                end
+                if #rows == lh and rows[1] and #rows[1] == lw then
+                    logo = { w = lw, h = lh, rows = rows, pal = pal }
+                end
+            end
+        end
+    end
+end
+
 local function showLogo(titleText, subtitleText)
     local mw, mh = monitor.getSize()
     monitor.setBackgroundColor(colors.black)
     monitor.setTextColor(colors.white)
     monitor.clear()
+    if logo then
+        if logo.pal then
+            for i = 1, 16 do
+                local c = logo.pal[i]
+                monitor.setPaletteColor(2 ^ (i - 1), c[1], c[2], c[3])
+            end
+        end
+        local sx = math.floor((mw - logo.w) / 2) + 1
+        local sy = math.floor((mh - logo.h) / 2) + 1
+        local blank = (" "):rep(logo.w)
+        for y = 1, logo.h do
+            monitor.setCursorPos(sx, sy + y - 1)
+            monitor.blit(blank, logo.rows[y], logo.rows[y])
+        end
+        local sub = subtitleText or ""
+        if sub ~= "" then
+            monitor.setBackgroundColor(colors.black)
+            monitor.setTextColor(colors.gray)
+            monitor.setCursorPos(math.floor((mw - #sub) / 2) + 1,
+                                 math.max(1, math.min(mh, sy + logo.h + 1)))
+            monitor.write(sub)
+        end
+        return
+    end
     monitor.setBackgroundColor(colors.gray)
     for x = 1, mw do
         monitor.setCursorPos(x, 1)
