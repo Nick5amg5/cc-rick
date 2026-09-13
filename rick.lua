@@ -5,9 +5,9 @@ Usage:  rick [name]
   - "rick intro" plays intro.data / intro.dfpwm
   - "rick list" lists every installed track (name, size, resolution, etc.)
 Controls on the computer keyboard:
-  P - pause / resume
-  [ - volume down       ] - volume up
-  Q - quit
+  P - pause / resume       Q - quit
+  [ - volume down     ] - volume up
+  , - audio earlier   . - audio later   (persisted to rick.sync)
 Photo quality: per-frame adaptive 16-colour palette (monitor palette is set
 per frame before drawing). Centres the picture on whatever monitor it finds. ]]
 
@@ -164,15 +164,79 @@ if not name then
     end
 end
 
-local vid = loadVideo(name)
-W, H, FPS, PAL = vid.W, vid.H, vid.FPS, vid.PAL
-frames = vid.frames
-
 local monitor = peripheral.find("monitor")
 assert(monitor, "No monitor found. Place monitors then run: rick.")
 pcall(monitor.setTextScale, 0.5)
 monitor.setBackgroundColor(colors.black)
 monitor.clear()
+
+local function showLogo(titleText, subtitleText)
+    local mw, mh = monitor.getSize()
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.clear()
+    monitor.setBackgroundColor(colors.gray)
+    for x = 1, mw do
+        monitor.setCursorPos(x, 1)
+        monitor.write(" ")
+        monitor.setCursorPos(x, mh)
+        monitor.write(" ")
+    end
+    for y = 1, mh do
+        monitor.setCursorPos(1, y)
+        monitor.write(" ")
+        monitor.setCursorPos(mw, y)
+        monitor.write(" ")
+    end
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.lime)
+    monitor.setCursorPos(math.floor((mw - #titleText) / 2) + 1, math.max(1, math.floor(mh / 2) - 1))
+    monitor.write(titleText)
+    monitor.setTextColor(colors.gray)
+    local sub = subtitleText or ""
+    monitor.setCursorPos(math.floor((mw - #sub) / 2) + 1, math.floor(mh / 2) + 1)
+    monitor.write(sub)
+end
+
+if not name then
+    local all = {}
+    for f in fs.find("*.data") do
+        all[#all + 1] = f:sub(1, #f - 5)
+    end
+    if #all == 0 then
+        error("no .data files here - run install first")
+    elseif #all == 1 then
+        name = all[1]
+    else
+        term.clear()
+        term.setTextColor(colors.green)
+        term.setCursorPos(1, 1)
+        term.write("SELECT VIDEO   (1-" .. math.min(9, #all) .. ", Q = quit)")
+        for i, nm in ipairs(all) do
+            term.setCursorPos(1, 2 + i)
+            term.setTextColor(colors.white)
+            term.write((i <= 9 and (i .. ". ") or "   ") .. nm)
+        end
+        showLogo("SELECT TRACK", ("pick 1-%d, Q quits"):format(math.min(9, #all)))
+        local picked
+        while not picked do
+            local ev = {os.pullEvent()}
+            if ev[1] == "key" then
+                if ev[2] == keys.q then return end
+                local idx = ev[2] - keys.one + 1
+                if idx >= 1 and idx <= math.min(9, #all) then
+                    picked = idx
+                end
+            end
+        end
+        name = all[picked]
+        showLogo("LOADING", name)
+    end
+end
+
+local vid = loadVideo(name)
+W, H, FPS, PAL = vid.W, vid.H, vid.FPS, vid.PAL
+frames = vid.frames
 
 local spaces = (" "):rep(W)
 local startX, startY
@@ -205,6 +269,24 @@ drawIdx(1)
 local paused = false
 local quit = false
 local volume = 1.2                  -- 0 .. 3, use [] to change
+local syncLead = 0.2                -- start video this many seconds after audio
+do
+    local f = io.open("rick.sync", "r")
+    if f then
+        local v = tonumber(f:read("*a"))
+        if v then
+            syncLead = math.max(0, math.min(1.5, v))
+        end
+        f:close()
+    end
+end
+local function saveSync()
+    local f = fs.open("rick.sync", "w")
+    if f then
+        f.write(string.format("%.2f", syncLead))
+        f.close()
+    end
+end
 local framesShown = 0
 local lastGuiAt = -1
 
@@ -241,8 +323,12 @@ local function drawGui(force)
     term.write("screen " .. mw2 .. "x" .. mh2 .. " cells")
     term.setCursorPos(1, 11)
     term.write("volume " .. math.floor(volume * 10) / 10 .. "   [ - / = ]")
+    term.setCursorPos(1, 13)
+    term.write("sync " .. string.format("%.2f", syncLead) .. " s   [ , / . ]")
 end
 drawGui(true)
+
+local vstart = os.clock()
 
 local function videoThread()
     local step = FPS / 20
@@ -252,7 +338,7 @@ local function videoThread()
         local ev = {os.pullEvent()}
         if ev[1] == "timer" and ev[2] == timerId then
             timerId = os.startTimer(0.05)
-            if not paused then
+            if not paused and os.clock() - vstart >= syncLead then
                 acc = acc + step
                 if acc >= 1 then
                     local n = math.floor(acc)
@@ -275,6 +361,14 @@ local function videoThread()
             elseif ev[2] == keys.equals then
                 volume = math.min(3, volume + 0.1)
                 drawGui(true)
+            elseif ev[2] == keys.comma then
+                syncLead = math.max(0, syncLead - 0.05)
+                saveSync()
+                drawGui(true)
+            elseif ev[2] == keys.period then
+                syncLead = math.min(1.5, syncLead + 0.05)
+                saveSync()
+                drawGui(true)
             end
         end
     end
@@ -284,7 +378,7 @@ local function audioThread()
     local speaker = peripheral.find("speaker")
     if not speaker then
         print("No speaker found - video only.")
-        while true do sleep(0) end
+        while true do sleep(0.05) end
     end
     local dfpwm = require "cc.audio.dfpwm"
     local function openTrack()
@@ -294,9 +388,9 @@ local function audioThread()
     local track, decoder = openTrack()
     while not quit do
         if paused then
-            sleep(0)
+            sleep(0.05)
         else
-            local chunk = track:read(16 * 1024)
+            local chunk = track:read(2048)
             if not chunk or #chunk == 0 then
                 track:close()
                 track, decoder = openTrack()
@@ -311,5 +405,6 @@ local function audioThread()
     track:close()
 end
 
-print("Now playing " .. name .. " - P pause, [ ] volume, Q quit")
+print("Now playing " .. name .. " - P pause, [ ] volume, , . sync, Q quit")
 parallel.waitForAll(videoThread, audioThread)
+showLogo("STOPPED", name)
