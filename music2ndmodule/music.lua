@@ -21,6 +21,8 @@ GUI keys:
   space         pause / resume
   l             loop the song list on / off
   [ and ]       volume down / up
+  f             search online (same song API as the classic CC "music" player)
+  d             save the highlighted online result into your own library
   a             add the highlighted song to the current playlist
   s             save the current playlist (prompts for a name if none)
   p             cycle playlists (ALL songs -> playlist 1 -> ... -> ALL)
@@ -30,13 +32,21 @@ GUI keys:
 
 Notes:
   - Plays through the first connected speaker.
-  - Requires http enabled for "music add" - regular playback is fully offline.
+  - Online search + streaming + saving all need http enabled, and the
+    song API host added to the server's http whitelist.
+    Regular playback of your own library is fully offline.
 ]]
 
 local args = { ... }
 
 local CHUNK = 2048                       -- dfpwm bytes per feed (~0.34 s)
 local function songPath(n) return "music/" .. n .. ".dfpwm" end
+
+local API_BASE = "https://ipod-2to6magyna-uc.a.run.app/"
+local API_VER = "2.1"
+local onlineList = {}                    -- flattened online search results
+local lastSearchUrl = nil                -- pending http.request url
+local searchPending = false
 
 local function scanSongs()
     local out = {}
@@ -89,9 +99,12 @@ local state = {
     playing = false,
     paused = false,
     loop = false,
-    current = nil,           -- song name currently loaded
+    current = nil,           -- song label currently loaded
     elapsed = 0,
-    dir = nil,               -- open file handle
+    dir = nil,               -- open file handle (library song)
+    http = nil,              -- open stream handle (online song)
+    online = nil,            -- { url, id } when streaming from the API
+    onlineOpen = nil,        -- the online entry currently open
     openName = nil,
     seq = 0,                 -- increments on every song change (aborts old playback)
 }
@@ -109,6 +122,8 @@ end
 local function rebuildView()
     if viewMode == "ALL" then
         viewList = scanSongs()
+    elseif viewMode == "ONLINE" then
+        -- online results stay exactly as the search returned them
     else
         viewList = {}
         for _, n in ipairs(loadPlaylist(viewMode)) do
@@ -123,12 +138,21 @@ local function emit()
     os.queueEvent("music_audio")
 end
 
+local function closeHandles()
+    if state.http then pcall(state.http.close, state.http) end
+    state.http = nil
+    if state.dir then pcall(state.dir.close, state.dir) end
+    state.dir = nil
+end
+
 local function startSong(n)
     state.current = n
+    state.online = nil
+    state.onlineOpen = nil
+    closeHandles()
     state.playing = true
     state.paused = false
     state.elapsed = 0
-    state.dir = nil
     state.seq = state.seq + 1
     emit()
 end
@@ -137,27 +161,85 @@ local function stopSong()
     state.playing = false
     state.paused = false
     state.current = nil
-    state.dir = nil
+    state.online = nil
+    state.onlineOpen = nil
+    closeHandles()
     state.seq = state.seq + 1
     emit()
 end
 
+local function streamUrl(id)
+    return API_BASE .. "?v=" .. API_VER .. "&id=" .. textutils.urlEncode(id)
+end
+
+local function sanitizeName(n)
+    n = (n or ""):gsub("[^%w%._%- ]", ""):gsub("%s+", " "):sub(1, 40)
+    if n == "" then n = "song" end
+    return n
+end
+
+local function flattenResults(res)
+    local out = {}
+    for _, r in ipairs(res or {}) do
+        if type(r) == "table" then
+            if r.type == "playlist" and type(r.playlist_items) == "table" then
+                for _, it in ipairs(r.playlist_items) do
+                    out[#out + 1] = {
+                        label = it.name or it.id or "track",
+                        id = it.id,
+                        name = it.name,
+                        artist = it.artist,
+                    }
+                end
+            else
+                out[#out + 1] = {
+                    label = r.name or r.id or "track",
+                    id = r.id,
+                    name = r.name,
+                    artist = r.artist,
+                }
+            end
+        end
+    end
+    return out
+end
+
+local function startOnline(it)
+    state.current = it.label
+    state.online = { url = streamUrl(it.id), id = it.id }
+    state.onlineOpen = nil
+    closeHandles()
+    state.playing = true
+    state.paused = false
+    state.elapsed = 0
+    state.seq = state.seq + 1
+    emit()
+end
+
+local function playIndex(i)
+    if viewMode == "ONLINE" and onlineList[i] then
+        startOnline(onlineList[i])
+    else
+        startSong(viewList[i])
+    end
+end
+
 local function nextSong()
     if not state.current then
-        if #viewList > 0 then startSong(viewList[math.min(cursor, #viewList)]) end
+        if #viewList > 0 then playIndex(math.min(cursor, #viewList)) end
         return
     end
     local i = inList(state.current, viewList)
     if i then
         if i < #viewList then
-            startSong(viewList[i + 1])
+            playIndex(i + 1)
             return
         elseif state.loop and #viewList > 0 then
-            startSong(viewList[1])
+            playIndex(1)
             return
         end
     else
-        if #viewList > 0 then startSong(viewList[1]) end
+        if #viewList > 0 then playIndex(1) end
         return
     end
     stopSong()
@@ -165,18 +247,19 @@ end
 
 local function prevSong()
     if not state.current then
-        if #viewList > 0 then startSong(viewList[math.min(cursor, #viewList)]) end
+        if #viewList > 0 then playIndex(math.min(cursor, #viewList)) end
         return
     end
     local i = inList(state.current, viewList)
     if i and i > 1 then
-        startSong(viewList[i - 1])
+        playIndex(i - 1)
     elseif state.loop and #viewList > 0 then
-        startSong(viewList[#viewList])
+        playIndex(#viewList)
     else
         state.elapsed = 0 -- just restart the current one
         state.seq = state.seq + 1
-        state.dir = nil
+        state.onlineOpen = nil
+        closeHandles()
         emit()
     end
 end
@@ -211,19 +294,24 @@ local function draw()
         if fs.exists(p) then
             total = fs.getSize(p) * 8 / 48000
         end
-        local barW = math.max(8, w - 22)
-        local frac = total > 0 and (state.elapsed / total) or 0
-        local filled = math.floor(frac * barW)
         term.setTextColor(colors.lightGray)
         term.setCursorPos(2, 3)
-        term.write(fmtT(state.elapsed) .. " / " .. fmtT(total))
-        term.setBackgroundColor(colors.gray)
-        for x = 0, barW - 1 do
-            term.setCursorPos(12 + x, 3)
-            term.write(x < filled and "=" or "-")
+        local barW = math.max(8, w - 22)
+        if total > 0 then
+            local frac = state.elapsed / total
+            local filled = math.floor(frac * barW)
+            term.write(fmtT(state.elapsed) .. " / " .. fmtT(total))
+            term.setBackgroundColor(colors.gray)
+            for x = 0, barW - 1 do
+                term.setCursorPos(12 + x, 3)
+                term.write(x < filled and "=" or "-")
+            end
+            term.setBackgroundColor(colors.black)
+            term.setCursorPos(13 + barW + 1, 3)
+        else
+            term.write(fmtT(state.elapsed) .. " (streaming)")
+            term.setCursorPos(13 + barW + 1, 3)
         end
-        term.setBackgroundColor(colors.black)
-        term.setCursorPos(13 + barW + 1, 3)
         term.setTextColor(state.paused and colors.yellow or colors.lime)
         term.write(state.paused and "PAUSED" or "PLAYING")
     else
@@ -243,10 +331,23 @@ local function draw()
     for i, n in ipairs(playlists) do pls[i] = n end
     term.write("Playlists: " .. (#pls == 0 and "(none)" or table.concat(pls, ", ")))
 
+    if state.status then
+        term.setTextColor(colors.lightGray)
+        term.setCursorPos(2, 6)
+        local st = state.status
+        if #st > w - 3 then st = st:sub(1, w - 6) .. "..." end
+        term.write(st)
+    end
+
     local top = 7
     local rowsAvail = h - top - 1
     local half = math.floor(rowsAvail / 2)
     local off = math.max(0, math.min(math.max(0, #viewList - rowsAvail), cursor - 1 - half))
+    if viewMode == "ONLINE" and #viewList == 0 and not searchPending then
+        term.setTextColor(colors.gray)
+        term.setCursorPos(2, top)
+        term.write("No results - press f to search online")
+    end
     for row = 1, rowsAvail do
         local idx = off + row
         local y = top + row - 1
@@ -274,7 +375,7 @@ local function draw()
     term.setTextColor(colors.gray)
     term.setCursorPos(1, h)
     term.clearLine()
-    local help = "ENTER play | n/b next | space pause | l loop | [ ] vol | a add | s save | p playlists | c new | x del | q quit"
+    local help = "ENTER play | n/b next | space pause | l loop | [ ] vol | f search online | d save | a add | s save pl | p playlists | c new | x del | q quit"
     term.write(help:sub(1, math.max(1, w - 1)))
 end
 
@@ -289,26 +390,54 @@ local function audioLoop()
     while true do
         os.pullEvent("music_audio")
         if state.playing and state.current and not state.paused then
-            if state.dir == nil or state.openName ~= state.current then
-                if state.dir then pcall(state.dir.close, state.dir) end
-                local p = songPath(state.current)
-                local h = io.open(p, "rb")
-                if not h then
-                    stopSong()
+            local online = state.online
+            local needOpen = false
+            if online then
+                needOpen = state.onlineOpen ~= online
+            else
+                needOpen = state.dir == nil or state.openName ~= state.current
+            end
+            if needOpen then
+                if state.http then pcall(state.http.close, state.http) end
+                state.http = nil
+                if online then
+                    local resp = http.get(online.url, nil, true, { timeout = 60000 })
+                    if not resp then
+                        stopSong()
+                    else
+                        state.http = resp
+                        state.onlineOpen = online
+                        decoder = dfpwm.make_decoder()
+                        state.elapsed = 0
+                    end
                 else
-                    state.dir = h
-                    state.openName = state.current
-                    decoder = dfpwm.make_decoder()
-                    state.elapsed = 0
+                    if state.dir and state.openName ~= state.current then
+                        pcall(state.dir.close, state.dir)
+                    end
+                    state.dir = io.open(songPath(state.current), "rb")
+                    if not state.dir then
+                        stopSong()
+                    else
+                        state.openName = state.current
+                        decoder = dfpwm.make_decoder()
+                        state.elapsed = 0
+                    end
                 end
             end
-            if state.dir then
+            local h = state.online and state.http or state.dir
+            if h then
                 local mySeq = state.seq
-                local chunk = state.dir:read(CHUNK)
+                local chunk = h:read(CHUNK)
                 if not chunk or #chunk == 0 then
-                    pcall(state.dir.close, state.dir)
-                    state.dir = nil
-                    state.openName = nil
+                    if state.online then
+                        pcall(state.http.close, state.http)
+                        state.http = nil
+                        state.onlineOpen = nil
+                    else
+                        pcall(state.dir.close, state.dir)
+                        state.dir = nil
+                        state.openName = nil
+                    end
                     if mySeq == state.seq then nextSong() end
                     if mySeq == state.seq then emit() end
                 else
@@ -396,20 +525,67 @@ local function uiLoop()
                 if cursor < #viewList then cursor = cursor + 1 end
                 os.queueEvent("music_redraw")
             elseif k == keys.enter then
-                if viewList[cursor] then startSong(viewList[cursor]) end
+                if viewList[cursor] then
+                    if viewMode == "ONLINE" then
+                        if onlineList[cursor] then startOnline(onlineList[cursor]) end
+                    else
+                        startSong(viewList[cursor])
+                    end
+                end
             elseif k == keys.n then
                 nextSong()
             elseif k == keys.b then
                 prevSong()
             elseif k == keys.space then
                 if state.current or #viewList > 0 then
-                    if not state.current then startSong(viewList[cursor] or viewList[1]) end
+                    if not state.current then playIndex(math.max(1, cursor)) end
                     state.paused = not state.paused
                     emit()
                 end
             elseif k == keys.l then
                 state.loop = not state.loop
                 os.queueEvent("music_redraw")
+            elseif k == keys.f then
+                if not http then
+                    state.status = "http is disabled on this server"
+                    os.queueEvent("music_redraw")
+                else
+                    local q = promptLine("search online: ")
+                    if q ~= "" then
+                        lastSearchUrl = API_BASE .. "?v=" .. API_VER .. "&search=" .. textutils.urlEncode(q)
+                        searchPending = true
+                        viewMode = "ONLINE"
+                        onlineList = {}
+                        viewList = {}
+                        cursor = 1
+                        state.status = "searching ..."
+                        os.queueEvent("music_redraw")
+                        http.request(lastSearchUrl)
+                    end
+                end
+            elseif k == keys.d then
+                if viewMode == "ONLINE" and onlineList[cursor] then
+                    local it = onlineList[cursor]
+                    local fname = sanitizeName(it.name or it.label)
+                    state.status = "saving " .. fname .. " ..."
+                    os.queueEvent("music_redraw")
+                    local resp = http.get(streamUrl(it.id), nil, true, { timeout = 120000 })
+                    if resp then
+                        local data = resp.readAll()
+                        resp.close()
+                        fs.makeDir("music")
+                        local f = assert(fs.open(songPath(fname), "wb"))
+                        f.write(data)
+                        f.close()
+                        state.status = "saved music/" .. fname .. ".dfpwm (" .. #data .. " B) - press p to see it"
+                    else
+                        state.status = "download failed - is " .. API_BASE .. " whitelisted?"
+                    end
+                    os.queueEvent("music_redraw")
+                else
+                    state.status = "use f to search online first"
+                    os.queueEvent("music_redraw")
+                end
             elseif k == keys.leftBracket then
                 state.volume = math.max(0, state.volume - 0.1)
                 os.queueEvent("music_redraw")
@@ -424,19 +600,23 @@ local function uiLoop()
                 os.queueEvent("music_redraw")
             elseif k == keys.a then
                 local n = viewList[cursor]
-                if n and viewMode ~= "ALL" then
+                if n and viewMode ~= "ALL" and viewMode ~= "ONLINE" then
                     local items = loadPlaylist(viewMode)
                     if not inList(n, items) then
                         items[#items + 1] = n
                         savePlaylist(viewMode, items)
                         rebuildView()
                     end
+                elseif viewMode == "ONLINE" then
+                    state.status = "use d to save an online result to your library"
                 else
-                    print("pick a playlist first (p or c) - then use 'a' to add songs")
+                    state.status = "pick a playlist first (p or c) - then use 'a' to add songs"
                 end
                 os.queueEvent("music_redraw")
             elseif k == keys.s then
-                if viewMode == "ALL" then
+                if viewMode == "ONLINE" then
+                    state.status = "can't save an online view - press p to pick a playlist first"
+                elseif viewMode == "ALL" then
                     local nm = promptLine("save playlist as: ")
                     if nm ~= "" then
                         savePlaylist(nm, scanSongs())
@@ -471,7 +651,7 @@ local function uiLoop()
                 end
                 os.queueEvent("music_redraw")
             elseif k == keys.x then
-                if viewMode ~= "ALL" then
+                if viewMode ~= "ALL" and viewMode ~= "ONLINE" then
                     local path = "music/playlists/" .. viewMode .. ".txt"
                     if fs.exists(path) then fs.delete(path) end
                     playlists = listPlaylists()
@@ -486,6 +666,30 @@ local function uiLoop()
                 term.setTextColor(colors.white)
                 print("bye")
                 return
+            end
+        elseif ev[1] == "http_success" then
+            local okUrl, handle = ev[2], ev[3]
+            if okUrl == lastSearchUrl then
+                local txt = handle.readAll()
+                handle.close()
+                local okParse, res = pcall(textutils.unserialiseJSON, txt)
+                searchPending = false
+                if okParse and type(res) == "table" then
+                    onlineList = flattenResults(res)
+                    viewList = {}
+                    for _, it in ipairs(onlineList) do viewList[#viewList + 1] = it.label end
+                    cursor = 1
+                    state.status = #onlineList .. " online result" .. (#onlineList == 1 and "" or "s")
+                else
+                    state.status = "search returned nothing"
+                end
+                os.queueEvent("music_redraw")
+            end
+        elseif ev[1] == "http_failure" then
+            if ev[2] == lastSearchUrl then
+                searchPending = false
+                state.status = "search failed (network / whitelist)"
+                os.queueEvent("music_redraw")
             end
         elseif ev[1] == "music_redraw" then
             draw()
