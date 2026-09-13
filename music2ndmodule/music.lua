@@ -47,7 +47,17 @@ local function streamGet(url)
     -- unambiguously request a binary response; also works on CC versions
     -- where http.get only accepts the table form. Timeout is in SECONDS
     -- (CC caps it at 60.0) and only bounds the initial connection.
-    return http.get({ url = url, binary = true, timeout = 30 })
+    -- Returns (resp, err): resp is nil on transport-level failure.
+    local resp, err = http.get({ url = url, binary = true, timeout = 60 })
+    if not resp then
+        -- older CraftOS: positional form (url, headers, binary, timeout)
+        resp, err = http.get(url, nil, true, 60)
+    end
+    if not resp and err then
+        -- second return value of http.get is the failure reason, keep it
+        return nil, err
+    end
+    return resp
 end
 
 local API_BASE = "https://ipod-2to6magyna-uc.a.run.app/"
@@ -400,14 +410,24 @@ local function audioLoop()
             if needOpen then
                 if online then
                     state.status = "loading stream ..."
-                    local resp = streamGet(online.url)
+                    local resp, err = streamGet(online.url)
                     if not resp then
-                        state.status = "couldn't download stream (check http/whitelist)"
+                        for _ = 1, 2 do -- one retry (cloud cold starts can stall)
+                            sleep(1)
+                            resp, err = streamGet(online.url)
+                            if resp then break end
+                        end
+                    end
+                    if not resp then
+                        state.status = "couldn't download stream: " .. (err or "unreachable - is " .. API_BASE .. " whitelisted?")
                         stopSong()
                     else
+                        local code = ""
+                        local okCode, c = pcall(resp.getResponseCode, resp)
+                        if okCode and c then code = " (http " .. c .. ")" end
                         local okReadall, data = pcall(resp.readAll, resp)
                         pcall(resp.close, resp)
-                        if okReadall and data and #data > 0 then
+                        if okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a" then
                             state.buf = data
                             state.pos = 1
                             state.onlineOpen = online
@@ -415,9 +435,11 @@ local function audioLoop()
                             state.elapsed = 0
                         else
                             if not okReadall then
-                                state.status = "couldn't read stream"
+                                state.status = "couldn't read stream" .. code
+                            elseif data and data:sub(1, 7) ~= "DFPWM1a" then
+                                state.status = "not audio" .. code
                             else
-                                state.status = "empty stream"
+                                state.status = "empty stream" .. code
                             end
                             stopSong()
                         end
@@ -495,13 +517,17 @@ local function runCLI()
             return
         end
         io.write("downloading " .. name .. " ... ")
-        local resp = streamGet(url)
+        local resp, err = streamGet(url)
         if not resp then
-            print("FAILED")
+            print("FAILED: " .. (err or "unreachable - is the host whitelisted?"))
             return
         end
-        local data = resp.readAll()
+        local okReadall, data = pcall(resp.readAll, resp)
         resp.close()
+        if not (okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a") then
+            print("FAILED: response is not dfpwm audio")
+            return
+        end
         fs.makeDir("music")
         local f = assert(fs.open(songPath(name), "wb"))
         f.write(data)
@@ -581,17 +607,26 @@ local function uiLoop()
                     local fname = sanitizeName(it.name or it.label)
                     state.status = "saving " .. fname .. " ..."
                     os.queueEvent("music_redraw")
-                    local resp = streamGet(streamUrl(it.id))
+                    local resp, err = streamGet(streamUrl(it.id))
                     if resp then
-                        local data = resp.readAll()
+                        local okReadall, data = pcall(resp.readAll, resp)
+                        local code = ""
+                        local okCode, c = pcall(resp.getResponseCode, resp)
+                        if okCode and c then code = " (http " .. c .. ")" end
                         resp.close()
-                        fs.makeDir("music")
-                        local f = assert(fs.open(songPath(fname), "wb"))
-                        f.write(data)
-                        f.close()
-                        state.status = "saved music/" .. fname .. ".dfpwm (" .. #data .. " B) - press p to see it"
+                        if okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a" then
+                            fs.makeDir("music")
+                            local f = assert(fs.open(songPath(fname), "wb"))
+                            f.write(data)
+                            f.close()
+                            state.status = "saved music/" .. fname .. ".dfpwm (" .. #data .. " B)"
+                        elseif okReadall and data and data:sub(1, 7) ~= "DFPWM1a" then
+                            state.status = "not audio" .. code
+                        else
+                            state.status = "couldn't read response" .. code
+                        end
                     else
-                        state.status = "download failed - is " .. API_BASE .. " whitelisted?"
+                        state.status = "download failed: " .. (err or ("is " .. API_BASE .. " whitelisted?"))
                     end
                     os.queueEvent("music_redraw")
                 else
@@ -611,19 +646,28 @@ local function uiLoop()
                         local fname = sanitizeName(it.name or it.label)
                         state.status = "saving " .. fname .. " to library ..."
                         os.queueEvent("music_redraw")
-                        local resp = streamGet(state.online.url)
+                        local resp, err = streamGet(state.online.url)
                         if not resp then
-                            state.status = "couldn't download - check http/whitelist"
+                            state.status = "couldn't download: " .. (err or "check http/whitelist")
                             ok = false
                             os.queueEvent("music_redraw")
                         else
-                            local data = resp.readAll()
+                            local okReadall, data = pcall(resp.readAll, resp)
+                            local code = ""
+                            local okCode, c = pcall(resp.getResponseCode, resp)
+                            if okCode and c then code = " (http " .. c .. ")" end
                             resp.close()
-                            fs.makeDir("music")
-                            local f = assert(fs.open(songPath(fname), "wb"))
-                            f.write(data)
-                            f.close()
-                            cur = fname
+                            if okReadall and data and #data > 0 and data:sub(1, 7) == "DFPWM1a" then
+                                fs.makeDir("music")
+                                local f = assert(fs.open(songPath(fname), "wb"))
+                                f.write(data)
+                                f.close()
+                                cur = fname
+                            else
+                                state.status = "couldn't save" .. code
+                                ok = false
+                                os.queueEvent("music_redraw")
+                            end
                         end
                     end
                     if ok then
