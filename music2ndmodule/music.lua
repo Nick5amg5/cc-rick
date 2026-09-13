@@ -41,8 +41,13 @@ Notes:
 
 local args = { ... }
 
-local CHUNK = 2048                       -- dfpwm bytes per feed (~0.34 s)
 local function songPath(n) return "music/" .. n .. ".dfpwm" end
+
+local function streamGet(url, timeout)
+    -- unambiguously request a binary response; also works on CC versions
+    -- where http.get only accepts the table form.
+    return http.get({ url = url, binary = true, timeout = timeout })
+end
 
 local API_BASE = "https://ipod-2to6magyna-uc.a.run.app/"
 local API_VER = "2.1"
@@ -403,7 +408,7 @@ local function audioLoop()
                 if state.http then pcall(state.http.close, state.http) end
                 state.http = nil
                 if online then
-                    local resp = http.get(online.url, nil, true, { timeout = 60000 })
+                    local resp = streamGet(online.url, 60000)
                     if not resp then
                         stopSong()
                     else
@@ -429,8 +434,9 @@ local function audioLoop()
             local h = state.online and state.http or state.dir
             if h then
                 local mySeq = state.seq
-                local chunk = h:read(CHUNK)
-                if not chunk or #chunk == 0 then
+                local chunk
+                local okRead = pcall(function() chunk = h:read(2048) end)
+                if not okRead or not chunk or #chunk == 0 then
                     if state.online then
                         pcall(state.http.close, state.http)
                         state.http = nil
@@ -440,7 +446,12 @@ local function audioLoop()
                         state.dir = nil
                         state.openName = nil
                     end
-                    if mySeq == state.seq then nextSong() end
+                    if okRead then
+                        if mySeq == state.seq then nextSong() end
+                    else
+                        state.status = "couldn't read audio stream"
+                        if mySeq == state.seq then stopSong() end
+                    end
                     if mySeq == state.seq then emit() end
                 else
                     local buffer = decoder(chunk)
@@ -485,7 +496,7 @@ local function runCLI()
             return
         end
         io.write("downloading " .. name .. " ... ")
-        local resp = http.get(url, nil, true, { timeout = 120000 })
+        local resp = streamGet(url, 120000)
         if not resp then
             print("FAILED")
             return
@@ -571,7 +582,7 @@ local function uiLoop()
                     local fname = sanitizeName(it.name or it.label)
                     state.status = "saving " .. fname .. " ..."
                     os.queueEvent("music_redraw")
-                    local resp = http.get(streamUrl(it.id), nil, true, { timeout = 120000 })
+                    local resp = streamGet(streamUrl(it.id), 120000)
                     if resp then
                         local data = resp.readAll()
                         resp.close()
@@ -601,7 +612,7 @@ local function uiLoop()
                         local fname = sanitizeName(it.name or it.label)
                         state.status = "saving " .. fname .. " to library ..."
                         os.queueEvent("music_redraw")
-                        local resp = http.get(state.online.url, nil, true, { timeout = 120000 })
+                        local resp = streamGet(state.online.url, 120000)
                         if not resp then
                             state.status = "couldn't download - check http/whitelist"
                             ok = false
