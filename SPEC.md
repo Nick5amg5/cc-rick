@@ -57,13 +57,14 @@ up to ~6009 frames (~5 min at 20 fps, ~5:54 at 17 fps).
 | jet2ad          | 30 s ad (YQZEoZ4W0ac)     | 164x67      | 20  | 6.5 MB      |
 | clullaby        | 4:3 video (ySnO1e1y0RE)   | 136x67      | 20  | 31.7 MB     |
 | beemoviespeed   | JMG1Nl7uWko               | 163x61      | 17  | 57.8 MB     |
+| beautybeatlyrics| lyric video (IynNT4JAFJM)| 164x67      | 20  | 48.6 MB     |
 Plus: install.lua, deletev.lua, tracks.txt, logo.data (from atmlogocinema.png),
 rick.lua, and the music2ndmodule/ folder.
 
 ## Hard limits (CC:Tweaked), why the sizes above are what they are
 - 67108864 B  (64 MiB) max single file a computer can http-download.
   -> beemoviespeed at 20 fps was 75.9 MB, had to drop to 17 fps.
-- 268435456 B (256 MB) computer disk -> only ~4-5 of the 8 tracks fit at once.
+- 268435456 B (256 MB) computer disk -> only ~4-5 of the 9 tracks fit at once.
   deletev <name> frees space; repo keeps everything so reinstall is trivial.
 
 ## Repo helper scripts (in game, installed to the computer root)
@@ -75,7 +76,7 @@ rick.lua, and the music2ndmodule/ folder.
 ## New computer setup (video wall)
 ```
 wget https://raw.githubusercontent.com/Nick5amg5/cc-rick/HEAD/install.lua install
-install -f rick osama ganstaparadise amishparadise verity jet2ad clullaby beemoviespeed
+install -f rick osama ganstaparadise amishparadise verity jet2ad clullaby beemoviespeed beautybeatlyrics
 rick                (or:  rick <name>,  rick list)
 ```
 Requires: http enabled on the server; monitor (Advanced, for colour) next to the
