@@ -10,18 +10,19 @@ Track name   Notes
   verity        -
   jet2ad        30 s ad
   clullaby      -
+  beemoviespeed -
 
 Commands (type on the computer, "/" is the computer's root):
   install <name>            install one track   (e.g.  install osama)
   install -f <name> ...     install several, overwriting any existing files
-  install -f rick osama ganstaparadise amishparadise verity jet2ad clullaby   (all)
+  install -f rick osama ganstaparadise amishparadise verity jet2ad clullaby beemoviespeed   (all)
   deletev <name>             remove one track
   deletev -a                 remove all tracks (keeps rick.lua / install / deletev)
   rick                      play (shows picker if several tracks are installed)
   rick <name>               play a specific track
   rick list                 list what is actually installed on this computer
 
-Size note: each ~164x67 track is 45-64 MB of game data. All 7 together
-(~310 MB) exceed the computer's 256 MB disk, so at most ~4-5 fit at once;
+Size note: each ~164x67 track is 45-64 MB of game data. All 8 together
+(~355 MB) exceed the computer's 256 MB disk, so only ~4-5 fit at once;
 use  deletev <name>  to free space before installing another. The repo keeps
 every file, so a deleted track can be reinstalled anytime with:  install <name>

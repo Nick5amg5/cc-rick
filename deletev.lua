@@ -23,8 +23,12 @@ end
 if args[1] == "-a" then
     for _, f in ipairs(fs.find("*.data")) do
         local n = f:sub(1, #f - 5)
-        rm(n .. ".data")
-        rm(n .. ".dfpwm")
+        if n == "logo" then
+            print("keeping " .. n .. ".data (idle logo)")
+        else
+            rm(n .. ".data")
+            rm(n .. ".dfpwm")
+        end
     end
 else
     for _, t in ipairs(args) do

@@ -481,6 +481,7 @@ local function audioThread()
             local chunk = track:read(2048)
             if not chunk or #chunk == 0 then
                 track:close()
+                track = nil
                 if loopMode then
                     track, decoder = openTrack()
                 else
@@ -494,7 +495,7 @@ local function audioThread()
             end
         end
     end
-    track:close()
+    if track then track:close() end
 end
 
 print("Now playing " .. name .. " - P pause, [ ] volume, , . sync, L loop, Q quit")
